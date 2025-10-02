@@ -177,7 +177,6 @@ function Format-Sql {
 Get-ChildItem -Path $InputFolder -Filter *.xml -File -Recurse | ForEach-Object {
   $inFile   = $_.FullName
   $baseName = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
-  # Always save updated files with "_pgs.xml" suffix in the output folder
   $outFile  = Join-Path $OutputFolder ($baseName + '_pgs.xml')
   $bakFile  = Join-Path $BackupFolder $_.Name
 
@@ -190,10 +189,10 @@ Get-ChildItem -Path $InputFolder -Filter *.xml -File -Recurse | ForEach-Object {
   # Target all <sqlText> nodes regardless of namespace
   $sqlNodes = $doc.SelectNodes("//*[local-name()='sqlText']")
 
-  if ($sqlNodes -and $sqlNodes.Count -gt 0) {
-    # Keep original as backup unless -WhatIf
-    if (-not $WhatIf) { Copy-Item -LiteralPath $inFile -Destination $bakFile -Force }
+  # Always back up original (once, with original name)
+  if (-not $WhatIf) { Copy-Item -LiteralPath $inFile -Destination $bakFile -Force }
 
+  if ($sqlNodes -and $sqlNodes.Count -gt 0) {
     $changed = $false
 
     foreach ($node in $sqlNodes) {
@@ -203,22 +202,17 @@ Get-ChildItem -Path $InputFolder -Filter *.xml -File -Recurse | ForEach-Object {
         if ($child.NodeType -eq [System.Xml.XmlNodeType]::CData) { $hadCdata = $true; break }
       }
 
-      # Original SQL text
       $orig  = $node.InnerText
-
-      # Apply DB2 → Postgres rewrites
       $fixed = Fix-SqlForPostgres $orig
       if ($UseFormatter) { $fixed = Format-Sql $fixed }
 
       if ($fixed -ne $orig) {
         $changed = $true
         if ($WhatIf) {
-          # Dry-run: show before/after but do not modify file
           Write-Host "Would change $inFile" -ForegroundColor Yellow
           Write-Host "Old SQL:`n$orig" -ForegroundColor DarkGray
           Write-Host "New SQL:`n$fixed" -ForegroundColor Green
         } else {
-          # Replace node content, preserving CDATA vs text
           $node.RemoveAll() | Out-Null
           if ($hadCdata) { $null = $node.AppendChild($doc.CreateCDataSection($fixed)) }
           else           { $null = $node.AppendChild($doc.CreateTextNode($fixed)) }
@@ -226,7 +220,6 @@ Get-ChildItem -Path $InputFolder -Filter *.xml -File -Recurse | ForEach-Object {
       }
     }
 
-    # Write updated XML (or just report no-op)
     if (-not $WhatIf) {
       $doc.Save($outFile)
       if ($changed) {
@@ -234,17 +227,11 @@ Get-ChildItem -Path $InputFolder -Filter *.xml -File -Recurse | ForEach-Object {
       } else {
         Write-Host "No SQL changes (still saved with suffix): $outFile" -ForegroundColor DarkGray
       }
-    } else {
-      Write-Host "Would write: $outFile" -ForegroundColor Yellow
     }
   } else {
-    # File has no <sqlText>; copy it through so the output tree mirrors input,
-    # still using the _pgs.xml suffix for consistency.
-    if (-not $WhatIf) {
-      Copy-Item -LiteralPath $inFile -Destination $bakFile -Force
-      Copy-Item -LiteralPath $inFile -Destination $outFile -Force
-    }
-    Write-Host "No <sqlText> nodes: $inFile  ->  $outFile" -ForegroundColor DarkGray
+    # No <sqlText> nodes: still save one _pgs copy in updated folder
+    if (-not $WhatIf) { Copy-Item -LiteralPath $inFile -Destination $outFile -Force }
+    Write-Host "No <sqlText> nodes: $inFile -> $outFile" -ForegroundColor DarkGray
   }
 }
 
