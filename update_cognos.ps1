@@ -3,7 +3,8 @@
 # Purpose: Scan Cognos XML reports, find <sqlText> nodes, and convert
 #          DB2-flavored SQL into PostgreSQL-compatible SQL.
 # Notes:
-#   - Safe by default: makes a backup copy of each input file.
+#   - Backups of originals go to "<input>\_backup".
+#   - Updated files go to "<input>\_updated", with name "<base>_pgs.xml".
 #   - Use -WhatIf to preview transformations without writing files.
 #   - Use -UseFormatter to lightly pretty-print the resulting SQL.
 # Author: (you)
@@ -13,7 +14,7 @@ param(
   # Folder containing Cognos XML report files
   [Parameter(Mandatory = $true)][string]$InputFolder,
 
-  # Where to write the updated XML files
+  # Where to write the updated XML files (kept separate from input)
   [string]$OutputFolder = "$InputFolder\_updated",
 
   # Preview only: do not write output files; just print diffs
@@ -58,7 +59,7 @@ function Fix-SqlForPostgres {
   $sql = $sql -replace "$cd\s*\+\s*-1\s+year\b",  "current_date - INTERVAL '1 year'"
 
   # Generic +/- N forms
-  # current_date + 5 DAYS  → current_date + INTERVAL '5 day'
+  # current_date + 5 DAYS   → current_date + INTERVAL '5 day'
   # current_date - 2 MONTHS → current_date - INTERVAL '2 month'
   $sql = $sql -replace "$cd\s*\+\s*(\d+)\s+day(s)?\b",   "current_date + INTERVAL '$1 day'"
   $sql = $sql -replace "$cd\s*\-\s*(\d+)\s+day(s)?\b",   "current_date - INTERVAL '$1 day'"
@@ -68,7 +69,6 @@ function Fix-SqlForPostgres {
   $sql = $sql -replace "$cd\s*\-\s*(\d+)\s+year(s)?\b",  "current_date - INTERVAL '$1 year'"
 
   # CURRENT TIMESTAMP → now() (Postgres builtin)
-  # Example: CURRENT TIMESTAMP → now()
   $sql = $sql -replace '(?is)\bcurrent\s+timestamp\b', 'now()'
 
   # -------------------------------------------------------------------
@@ -175,9 +175,11 @@ function Format-Sql {
 # Main: enumerate XML files, update <sqlText>, write outputs/backups
 # =====================================================================
 Get-ChildItem -Path $InputFolder -Filter *.xml -File -Recurse | ForEach-Object {
-  $inFile  = $_.FullName
-  $outFile = Join-Path $OutputFolder $_.Name
-  $bakFile = Join-Path $BackupFolder $_.Name
+  $inFile   = $_.FullName
+  $baseName = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+  # Always save updated files with "_pgs.xml" suffix in the output folder
+  $outFile  = Join-Path $OutputFolder ($baseName + '_pgs.xml')
+  $bakFile  = Join-Path $BackupFolder $_.Name
 
   # Load XML with whitespace preserved so Cognos structure stays intact
   $raw = Get-Content -LiteralPath $inFile -Raw
@@ -230,13 +232,19 @@ Get-ChildItem -Path $InputFolder -Filter *.xml -File -Recurse | ForEach-Object {
       if ($changed) {
         Write-Host "Updated: $outFile" -ForegroundColor Green
       } else {
-        Write-Host "No SQL changes: $inFile" -ForegroundColor DarkGray
+        Write-Host "No SQL changes (still saved with suffix): $outFile" -ForegroundColor DarkGray
       }
+    } else {
+      Write-Host "Would write: $outFile" -ForegroundColor Yellow
     }
   } else {
-    # File has no <sqlText>; copy it through so the output tree mirrors input
-    if (-not $WhatIf) { Copy-Item -LiteralPath $inFile -Destination $outFile -Force }
-    Write-Host "No <sqlText> nodes: $inFile" -ForegroundColor DarkGray
+    # File has no <sqlText>; copy it through so the output tree mirrors input,
+    # still using the _pgs.xml suffix for consistency.
+    if (-not $WhatIf) {
+      Copy-Item -LiteralPath $inFile -Destination $bakFile -Force
+      Copy-Item -LiteralPath $inFile -Destination $outFile -Force
+    }
+    Write-Host "No <sqlText> nodes: $inFile  ->  $outFile" -ForegroundColor DarkGray
   }
 }
 
