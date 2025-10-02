@@ -1,5 +1,5 @@
 param(
-  [Parameter(Mandatory=$true)][string]$InputFolder,
+  [Parameter(Mandatory = $true)][string]$InputFolder,
   [string]$OutputFolder = "$InputFolder\_updated",
   [switch]$WhatIf,
   [switch]$UseFormatter  # turn on to lightly pretty-print
@@ -33,38 +33,39 @@ function Fix-SqlForPostgres {
 
   # 3) CASTs / types
   $sql = [System.Text.RegularExpressions.Regex]::Replace(
-            $sql, '(?is)\bDATE\s*\(\s*([^)]+?)\s*\)', {'$('+$args[0].Groups[1].Value+')::date'})
+            $sql, '(?is)\bDATE\s*\(\s*([^)]+?)\s*\)', { $('(' + $args[0].Groups[1].Value + ')::date') })
 
   $sql = [System.Text.RegularExpressions.Regex]::Replace(
-            $sql, '(?is)\bTIMESTAMP\s*\(\s*([^)]+?)\s*\)', {'$('+$args[0].Groups[1].Value+')::timestamp'})
+            $sql, '(?is)\bTIMESTAMP\s*\(\s*([^)]+?)\s*\)', { $('(' + $args[0].Groups[1].Value + ')::timestamp') })
 
   $sql = [System.Text.RegularExpressions.Regex]::Replace(
-            $sql, '(?is)\bINTEGER\s*\(\s*([^)]+?)\s*\)', {'CAST('+$args[0].Groups[1].Value+' AS integer)'})
+            $sql, '(?is)\bINTEGER\s*\(\s*([^)]+?)\s*\)', { $('CAST(' + $args[0].Groups[1].Value + ' AS integer)') })
 
   $sql = [System.Text.RegularExpressions.Regex]::Replace(
-            $sql, '(?is)\bBIGINT\s*\(\s*([^)]+?)\s*\)', {'CAST('+$args[0].Groups[1].Value+' AS bigint)'})
+            $sql, '(?is)\bBIGINT\s*\(\s*([^)]+?)\s*\)', { $('CAST(' + $args[0].Groups[1].Value + ' AS bigint)') })
 
   $sql = [System.Text.RegularExpressions.Regex]::Replace(
-            $sql, '(?is)\bDOUBLE\s*\(\s*([^)]+?)\s*\)', {'CAST('+$args[0].Groups[1].Value+' AS double precision)'})
+            $sql, '(?is)\bDOUBLE\s*\(\s*([^)]+?)\s*\)', { $('CAST(' + $args[0].Groups[1].Value + ' AS double precision)') })
 
   $sql = [System.Text.RegularExpressions.Regex]::Replace(
             $sql, '(?is)\bDECIMAL\s*\(\s*([^,]+?)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)',
-            {'CAST('+$args[0].Groups[1].Value+' AS numeric('+$args[0].Groups[2].Value+','+$args[0].Groups[3].Value+'))'})
+            { $('CAST(' + $args[0].Groups[1].Value + ' AS numeric(' + $args[0].Groups[2].Value + ',' + $args[0].Groups[3].Value + '))') })
 
   # 4) Formatting functions
   $sql = [System.Text.RegularExpressions.Regex]::Replace(
             $sql, "(?is)\bVARCHAR_FORMAT\s*\(\s*([^,]+?)\s*,\s*'([^']*)'\s*\)",
-            {'to_char('+$args[0].Groups[1].Value+", '"+$args[0].Groups[2].Value+"')"}
+            { 'to_char(' + $args[0].Groups[1].Value + ", '" + $args[0].Groups[2].Value + "')" }
         )
 
   # Dates/timestamps via CHAR()
   $sql = [System.Text.RegularExpressions.Regex]::Replace(
             $sql, '(?is)\bCHAR\s*\(\s*([^)]+?\b(date|timestamp)\b[^)]*)\)',
-            {'to_char('+$args[0].Groups[1].Value+", 'YYYY-MM-DD')"}
+            { 'to_char(' + $args[0].Groups[1].Value + ", 'YYYY-MM-DD')" }
         )
+
   # Generic CHAR(expr)
   $sql = [System.Text.RegularExpressions.Regex]::Replace(
-            $sql, '(?is)\bCHAR\s*\(\s*([^)]+?)\s*\)', {'CAST('+$args[0].Groups[1].Value+' AS char)'})
+            $sql, '(?is)\bCHAR\s*\(\s*([^)]+?)\s*\)', { 'CAST(' + $args[0].Groups[1].Value + ' AS char)' })
 
   # FETCH FIRST n ROWS ONLY -> allowed in Postgres; leave as-is.
   # To force LIMIT n instead:
@@ -138,7 +139,11 @@ Get-ChildItem -Path $InputFolder -Filter *.xml -File -Recurse | ForEach-Object {
 
     if (-not $WhatIf) {
       $doc.Save($outFile)
-      Write-Host (($changed) ? "Updated: $outFile" : "No SQL changes: $inFile") -ForegroundColor ($changed ? 'Green' : 'DarkGray')
+      if ($changed) {
+        Write-Host "Updated: $outFile" -ForegroundColor Green
+      } else {
+        Write-Host "No SQL changes: $inFile" -ForegroundColor DarkGray
+      }
     }
   } else {
     if (-not $WhatIf) { Copy-Item -LiteralPath $inFile -Destination $outFile -Force }
