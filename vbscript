@@ -1,0 +1,49 @@
+Private Sub Worksheet_Change(ByVal Target As Range)
+    Const DATE_COL As Long = 1        ' A  = Date
+    Const ACTIVITY_COL As Long = 2    ' B  = Task/Activity
+    Const NOTES_COL As Long = 3       ' C  = Notes
+
+    Dim rng As Range, c As Range
+
+    On Error GoTo CleanExit
+    Application.EnableEvents = False
+
+    ' ==== 1) Auto-fill Date when Activity is entered/cleared ====
+    Set rng = Intersect(Target, Me.Columns(ACTIVITY_COL))
+    If Not rng Is Nothing Then
+        For Each c In rng
+            If Len(c.Value) > 0 And IsEmpty(Me.Cells(c.Row, DATE_COL).Value) Then
+                Me.Cells(c.Row, DATE_COL).Value = Date             ' true date
+                Me.Cells(c.Row, DATE_COL).NumberFormat = "dddd, mmmm d, yyyy"
+            ElseIf Len(c.Value) = 0 Then
+                Me.Cells(c.Row, DATE_COL).ClearContents            ' optional
+            End If
+        Next c
+    End If
+
+    ' ==== 2) Notes: add a line break after commas & wrap (no duplicates) ====
+    Set rng = Intersect(Target, Me.Columns(NOTES_COL))
+    If Not rng Is Nothing Then
+        Dim re As Object, txt As String
+        Set re = CreateObject("VBScript.RegExp")
+        With re
+            .Global = True
+            .IgnoreCase = True
+            ' Match a comma that is NOT already followed by a line break
+            .Pattern = ",(?!\r?\n)"
+        End With
+
+        For Each c In rng
+            If Not c.HasFormula And Not IsError(c.Value) Then
+                txt = CStr(c.Value)
+                If re.Test(txt) Then
+                    c.Value = re.Replace(txt, "," & vbLf)
+                    c.WrapText = True
+                End If
+            End If
+        Next c
+    End If
+
+CleanExit:
+    Application.EnableEvents = True
+End Sub
