@@ -1,38 +1,56 @@
 Private Sub Worksheet_Change(ByVal Target As Range)
-    Const DATE_COL As Long = 1        ' A  = Date
-    Const ACTIVITY_COL As Long = 2    ' B  = Task/Activity
-    Const NOTES_COL As Long = 3       ' C  = Notes
+    Const DATE_COL As Long = 1        ' A = Date
+    Const ACTIVITY_COL As Long = 2    ' B = Task/Activity
+    Const NOTES_COL As Long = 3       ' C = Notes
+    Const WEEK_COL As Long = 4        ' D = Week
 
     Dim rng As Range, c As Range
+    Dim txt As String
 
     On Error GoTo CleanExit
     Application.EnableEvents = False
 
-    ' ==== 1) Auto-fill Date when Activity is entered/cleared ====
+    ' === 1) Auto-fill Date & Week when Activity (col B) is edited ===
     Set rng = Intersect(Target, Me.Columns(ACTIVITY_COL))
     If Not rng Is Nothing Then
         For Each c In rng
-            If Len(c.Value) > 0 And IsEmpty(Me.Cells(c.Row, DATE_COL).Value) Then
-                Me.Cells(c.Row, DATE_COL).Value = Date             ' true date
-                Me.Cells(c.Row, DATE_COL).NumberFormat = "dddd, mmmm d, yyyy"
-            ElseIf Len(c.Value) = 0 Then
-                Me.Cells(c.Row, DATE_COL).ClearContents            ' optional
+            If Len(c.Value) > 0 Then
+                If IsEmpty(Me.Cells(c.Row, DATE_COL).Value) Then
+                    ' Put today's date (true date) and format
+                    Me.Cells(c.Row, DATE_COL).Value = Date
+                    Me.Cells(c.Row, DATE_COL).NumberFormat = "dddd, mmmm d, yyyy"
+                End If
+                ' Put week formula so it stays correct if Date changes later
+                Me.Cells(c.Row, WEEK_COL).Formula = "=ISOWEEKNUM(A" & c.Row & ")"
+            Else
+                ' If Activity cleared, clear Date & Week
+                Me.Cells(c.Row, DATE_COL).ClearContents
+                Me.Cells(c.Row, WEEK_COL).ClearContents
             End If
         Next c
     End If
 
-    ' ==== 2) Notes: add a line break after commas & wrap (no duplicates) ====
+    ' === 2) If Date (col A) is edited manually, refresh Week ===
+    Set rng = Intersect(Target, Me.Columns(DATE_COL))
+    If Not rng Is Nothing Then
+        For Each c In rng
+            If Len(c.Value) > 0 Then
+                Me.Cells(c.Row, WEEK_COL).Formula = "=ISOWEEKNUM(A" & c.Row & ")"
+            Else
+                Me.Cells(c.Row, WEEK_COL).ClearContents
+            End If
+        Next c
+    End If
+
+    ' === 3) Notes (col C): add line break after commas & wrap ===
     Set rng = Intersect(Target, Me.Columns(NOTES_COL))
     If Not rng Is Nothing Then
-        Dim re As Object, txt As String
-        Set re = CreateObject("VBScript.RegExp")
+        Dim re As Object: Set re = CreateObject("VBScript.RegExp")
         With re
             .Global = True
             .IgnoreCase = True
-            ' Match a comma that is NOT already followed by a line break
-            .Pattern = ",(?!\r?\n)"
+            .Pattern = ",(?!\r?\n)"   ' comma not already followed by a line break
         End With
-
         For Each c In rng
             If Not c.HasFormula And Not IsError(c.Value) Then
                 txt = CStr(c.Value)
