@@ -7,21 +7,30 @@ param(
     [string]$ReportFile        # optional CSV output
 )
 
-# Pass 1: auto-detect record width
+# Pass 1: count lines and find the dominant record width (footer excluded)
+$lens  = @{}
+$total = 0
+$prevLen = $null
+foreach ($l in [IO.File]::ReadLines($InFile)) {
+    if ($null -ne $prevLen) { $lens[$prevLen]++ }   # lags one line so the footer is never counted
+    $prevLen = $l.Length
+    $total++
+}
 if ($MinLen -le 0) {
-    $lens = @{}
-    foreach ($l in [IO.File]::ReadLines($InFile)) { $lens[$l.Length]++ }
-    $dominant = ($lens.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 1)
+    $dominant = $lens.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 1
     $MinLen = $dominant.Name - $Slack
     "Dominant record length: $($dominant.Name) ($($dominant.Value) lines). Using MinLen = $MinLen"
 }
+"Total lines: $total (line $total treated as footer and skipped)"
 
-# Pass 2: find split records
+# Pass 2: find split records, stopping before the footer
 $results = [Collections.Generic.List[object]]::new()
 $n = 0; $buf = $null; $start = 0; $parts = 0; $partLines = $null
 
 foreach ($line in [IO.File]::ReadLines($InFile)) {
     $n++
+    if ($n -eq $total) { break }                    # footer, skip it
+
     if ($null -eq $buf) {
         $buf = $line; $start = $n; $parts = 1
         $partLines = [Collections.Generic.List[string]]::new()
@@ -43,14 +52,14 @@ foreach ($line in [IO.File]::ReadLines($InFile)) {
         $buf = $null
     }
 }
-if ($null -ne $buf -and $parts -ge 1 -and $buf.Length -lt $MinLen) {
-    $results.Add([pscustomobject]@{ StartLine=$start; EndLine=$n; Parts=$parts; MergedLen=$buf.Length; Status='EOF_SHORT' })
-    "Lines $start-$n : short record at EOF (len $($buf.Length)) [EOF_SHORT]"
+
+# A short record left over right before the footer
+if ($null -ne $buf) {
+    $last = $n - 1
+    $results.Add([pscustomobject]@{ StartLine=$start; EndLine=$last; Parts=$parts; MergedLen=$buf.Length; Status='SHORT_BEFORE_FOOTER' })
+    "Lines $start-$last : short record before footer (len $($buf.Length)) [SHORT_BEFORE_FOOTER]"
+    if ($ShowText) { $partLines }
 }
 
-"`nTotal lines: $n   Split records found: $($results.Count)"
+"`nSplit records found: $($results.Count)"
 if ($ReportFile) { $results | Export-Csv $ReportFile -NoTypeInformation; "Report: $ReportFile" }
-
-
-.\Find-SplitRows.ps1 -InFile D:\data\file.dat
-.\Find-SplitRows.ps1 -InFile D:\data\file.dat -ShowText -ReportFile D:\data\split_report.csv
