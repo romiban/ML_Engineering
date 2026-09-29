@@ -1,65 +1,38 @@
 param(
     [Parameter(Mandatory)] [string]$InFile,
-    [int]$MinLen   = 0,        # 0 = auto: dominant width minus $Slack
-    [int]$Slack    = 5,
-    [int]$MaxParts = 5,
-    [switch]$ShowText,         # print the fragment text too
-    [string]$ReportFile        # optional CSV output
+    [int]$Context = 20,          # chars of text to show around the first bad char
+    [string]$ReportFile          # optional CSV output
 )
 
-# Pass 1: count lines and find the dominant record width (footer excluded)
-$lens  = @{}
-$total = 0
-$prevLen = $null
-foreach ($l in [IO.File]::ReadLines($InFile)) {
-    if ($null -ne $prevLen) { $lens[$prevLen]++ }   # lags one line so the footer is never counted
-    $prevLen = $l.Length
-    $total++
-}
-if ($MinLen -le 0) {
-    $dominant = $lens.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 1
-    $MinLen = $dominant.Name - $Slack
-    "Dominant record length: $($dominant.Name) ($($dominant.Value) lines). Using MinLen = $MinLen"
-}
-"Total lines: $total (line $total treated as footer and skipped)"
-
-# Pass 2: find split records, stopping before the footer
+$latin1 = [Text.Encoding]::GetEncoding(28591)   # 1 byte = 1 char, never alters bytes
+$reader = [IO.StreamReader]::new($InFile, $latin1, $false)
+$rx     = [regex]'[^\x00-\x7F]+'
 $results = [Collections.Generic.List[object]]::new()
-$n = 0; $buf = $null; $start = 0; $parts = 0; $partLines = $null
+$n = 0
 
-foreach ($line in [IO.File]::ReadLines($InFile)) {
-    $n++
-    if ($n -eq $total) { break }                    # footer, skip it
+try {
+    while ($null -ne ($line = $reader.ReadLine())) {
+        $n++
+        $ms = $rx.Matches($line)
+        if ($ms.Count -eq 0) { continue }
 
-    if ($null -eq $buf) {
-        $buf = $line; $start = $n; $parts = 1
-        $partLines = [Collections.Generic.List[string]]::new()
-    } else {
-        $buf += ' ' + $line; $parts++
-    }
-    $partLines.Add("  L$n (len $($line.Length)): $line")
-
-    if ($buf.Length -ge $MinLen -or $parts -ge $MaxParts) {
-        if ($parts -gt 1) {
-            $status = if ($buf.Length -lt $MinLen) { 'STILL_SHORT' } else { 'OK' }
+        foreach ($m in $ms) {
+            $hex = ($latin1.GetBytes($m.Value) | ForEach-Object { '{0:X2}' -f $_ }) -join ' '
             $results.Add([pscustomobject]@{
-                StartLine = $start; EndLine = $n; Parts = $parts
-                MergedLen = $buf.Length; Status = $status
+                Line = $n; Column = $m.Index + 1; Bytes = $hex; LineLen = $line.Length
             })
-            "Lines $start-$n : $parts parts, merged len $($buf.Length) [$status]"
-            if ($ShowText) { $partLines }
         }
-        $buf = $null
+
+        $first = $ms[0]
+        $s = [Math]::Max(0, $first.Index - $Context)
+        $e = [Math]::Min($line.Length, $first.Index + $first.Length + $Context)
+        $cols = ($ms | ForEach-Object { $_.Index + 1 }) -join ','
+        $hexAll = ($ms | ForEach-Object { ($latin1.GetBytes($_.Value) | ForEach-Object { '{0:X2}' -f $_ }) -join ' ' }) -join ' | '
+        "Line $n : col(s) $cols  bytes [$hexAll]  len $($line.Length)"
+        "    ...$($line.Substring($s, $e - $s))..."
     }
 }
+finally { $reader.Dispose() }
 
-# A short record left over right before the footer
-if ($null -ne $buf) {
-    $last = $n - 1
-    $results.Add([pscustomobject]@{ StartLine=$start; EndLine=$last; Parts=$parts; MergedLen=$buf.Length; Status='SHORT_BEFORE_FOOTER' })
-    "Lines $start-$last : short record before footer (len $($buf.Length)) [SHORT_BEFORE_FOOTER]"
-    if ($ShowText) { $partLines }
-}
-
-"`nSplit records found: $($results.Count)"
+"`nLines with non-ASCII bytes: $(($results | Select-Object -Unique Line).Count)   Total occurrences: $($results.Count)"
 if ($ReportFile) { $results | Export-Csv $ReportFile -NoTypeInformation; "Report: $ReportFile" }
